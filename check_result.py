@@ -1,6 +1,8 @@
+import re
 import sys
 import time
 from datetime import datetime, timedelta
+from typing import List
 
 from requests import post, Response
 from playwright.sync_api import Playwright, sync_playwright
@@ -17,14 +19,28 @@ SLACK_BOT_TOKEN = sys.argv[3]
 SLACK_CHANNEL = sys.argv[4]
 
 
-def hook_slack(message: str) -> Response:
+def __get_now() -> datetime:
     now_utc = datetime.utcnow()
     korea_timezone = timedelta(hours=9)
     now_korea = now_utc + korea_timezone
-    korea_time_str = now_korea.strftime("%Y-%m-%d %H:%M:%S")
+    return now_korea
+
+
+def __check_lucky_number(lucky_numbers: List[str], my_numbers: List[str]) -> str:
+    return_msg = ""
+    for my_num in my_numbers:
+        if my_num in lucky_numbers:
+            return_msg += f" [ {my_num} ] "
+            continue
+        return_msg += f" {my_num} "
+    return return_msg
+
+
+def hook_slack(message: str) -> Response:
+    korea_time_str = __get_now().strftime("%Y-%m-%d %H:%M:%S")
 
     payload = {
-        "text": f"> {korea_time_str} *로또 자동 구매 봇 알림* \n {message}",
+        "text": f"> {korea_time_str} *로또 자동 구매 봇 알림* \n{message}",
         "channel": SLACK_CHANNEL,
     }
     headers = {
@@ -52,8 +68,7 @@ def run(playwright: Playwright) -> None:
         # with page.expect_navigation(url="https://ol.dhlottery.co.kr/olotto/game/game645.do"):
         with page.expect_navigation():
             page.press('form[name="jform"] >> text=로그인', "Enter")
-
-        time.sleep(5)
+        time.sleep(4)
 
         # 당첨 결과 및 번호 확인
         page.goto("https://dhlottery.co.kr/common.do?method=main")
@@ -61,9 +76,47 @@ def run(playwright: Playwright) -> None:
         result_info = result_info.split("이전")[0].replace("\n", " ")
         hook_slack(f"로또 결과: {result_info}")
 
-        # page.goto("https://www.dhlottery.co.kr/myPage.do?method=lottoBuyListView")
-        # /myPage.do?method=lottoBuyList&searchStartDate=&searchEndDate=&lottoId=&nowPage=1
-        # table에서 tr 모두 가져와서 당첨 여부 체크
+        # 번호 추출하기
+        # last index가 보너스 번호
+        lucky_number = (
+            result_info.split("당첨번호")[-1]
+            .split("1등")[0]
+            .strip()
+            .replace("보너스번호 ", "")
+            .replace(" ", ",")
+        )
+        lucky_number = lucky_number.split(",")
+
+        # 오늘 구매한 복권 결과
+        now_date = __get_now().date().strftime("%Y%m%d")
+        page.goto(
+            url=f"https://dhlottery.co.kr/myPage.do?method=lottoBuyList&searchStartDate={now_date}&searchEndDate={now_date}&lottoId=&nowPage=1"
+        )
+
+        # 날짜 잘못 잡음
+        try:
+            a_tag_href = page.query_selector(
+                "tbody > tr:nth-child(1) > td:nth-child(4) > a"
+            ).get_attribute("href")
+        except AttributeError as exc:
+            raise Exception(
+                f"{exc} 에러 발생했습니다. now_date 값이 잘못세팅된 것 같습니다. 구매한 복권의 날짜와 결과 체크의 날짜가 동일한가요?"
+            )
+
+        detail_info = re.findall(r"\d+", a_tag_href)
+        page.goto(
+            url=f"https://dhlottery.co.kr/myPage.do?method=lotto645Detail&orderNo={detail_info[0]}&barcode={detail_info[1]}&issueNo={detail_info[2]}"
+        )
+        result_msg = ""
+        for result in page.query_selector_all("div.selected li"):
+            # 0번째 index에 기호와 당첨/낙첨 여부 포함
+            my_lucky_number = result.inner_text().split("\n")
+            result_msg += (
+                my_lucky_number[0]
+                + __check_lucky_number(lucky_number, my_lucky_number[1:])
+                + "\n"
+            )
+        hook_slack(f"> 이번주 나의 행운의 번호 결과는?!?!?!\n{result_msg}")
 
         # End of Selenium
         context.close()
