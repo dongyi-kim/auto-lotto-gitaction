@@ -45,5 +45,24 @@ jobs:
       - name: Run for buying Lotto!
         run: |
           python ./buy_lotto.py ${{secrets.USER_ID}} ${{secrets.USER_PW}} ${{secrets.SLACK_BOT_TOKEN}} ${{secrets.SLACK_CHANNEL}} ${{secrets.BUY_COUNT}}
+
+      # 레포지토리 체크아웃
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 자동 커밋을 위한 변경 사항 추가
+      - name: Make a dummy commit
+        run: |
+          date > last_run.txt
+
+      # Git 커밋 및 푸시
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: automated commit to prevent GitHub Actions disable"
+          branch: main
+          commit_user_name: GitHub Actions Bot
+          commit_user_email: actions@github.com
+          commit_author: GitHub Actions Bot <actions@github.com>
   
 
